@@ -1,0 +1,42 @@
+{
+  "name": "mohamed_tayeb",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "vite",
+    "build": "vite build",
+    "electron": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.mohamed_tayeb.id",
+    "productName": "mohamed tayeb School",
+    "files": [
+      "main.js",
+      "frontend/**/*",
+      "!node_modules/**/*"
+    ],
+    "win": {
+      "icon": "assets/logoWithOutBg.png",
+      "target": "nsis"
+    },
+    "mac": {
+      "icon": "assets/logoWithOutBg.png"
+    },
+    "linux": {
+      "icon": "assets/logoWithOutBg.png",
+      "target": "AppImage"
+    }
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3"
+  }
+}
