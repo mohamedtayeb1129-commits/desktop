@@ -5,6 +5,8 @@ const { autoUpdater } = require("electron-updater");
 
 const logFile = path.join(app.getPath("userData"), "app.log");
 
+let mainWindow = null;
+
 function log(...args) {
     const line = "[" + new Date().toISOString() + "] " + args.join(" ") + "\n";
 
@@ -21,7 +23,9 @@ function log(...args) {
 process.on("uncaughtException", (err) => {
     log("UNCAUGHT EXCEPTION:", err.stack || err.message);
 
-    dialog.showErrorBox("Startup error", err.message);
+    if (app.isReady()) {
+        dialog.showErrorBox("Startup error", err.message);
+    }
 });
 
 process.on("unhandledRejection", (reason) => {
@@ -33,7 +37,7 @@ process.on("unhandledRejection", (reason) => {
 
 function createWindow() {
     try {
-        const win = new BrowserWindow({
+        mainWindow = new BrowserWindow({
             width: 1400,
             height: 900,
 
@@ -44,7 +48,11 @@ function createWindow() {
             },
         });
 
-        win.webContents.on("did-fail-load", (event, code, desc) => {
+        mainWindow.on("closed", () => {
+            mainWindow = null;
+        });
+
+        mainWindow.webContents.on("did-fail-load", (event, code, desc) => {
             log("PAGE LOAD FAILED:", code, desc);
         });
 
@@ -57,7 +65,7 @@ function createWindow() {
             fs.existsSync(indexPath)
         );
 
-        win.loadFile(indexPath);
+        mainWindow.loadFile(indexPath);
     } catch (err) {
         log("WINDOW CREATION FAILED:", err.stack || err.message);
     }
@@ -71,16 +79,39 @@ function setupAutoUpdater() {
         debug: (...args) => log("UPDATER DEBUG:", ...args),
     };
 
-    // Silent: download in background, install when the app is closed
-    autoUpdater.autoDownload = true;
+    // Ask the user first: do NOT download automatically
+    autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
 
     autoUpdater.on("checking-for-update", () => {
         log("Checking for update...");
     });
 
-    autoUpdater.on("update-available", (info) => {
+    autoUpdater.on("update-available", async (info) => {
         log("Update available:", info.version);
+
+        const { response } = await dialog.showMessageBox(mainWindow, {
+            type: "info",
+            title: "Update available",
+            message: "A new version (" + info.version + ") is available.",
+            detail:
+                "You are using version " +
+                app.getVersion() +
+                ". Do you want to download and install the update?",
+            buttons: ["Update now", "Later"],
+            defaultId: 0,
+            cancelId: 1,
+        });
+
+        if (response === 0) {
+            log("User accepted update, downloading...");
+            autoUpdater.downloadUpdate().catch((err) => {
+                log("Download failed:", err.message);
+                dialog.showErrorBox("Update failed", err.message);
+            });
+        } else {
+            log("User postponed update");
+        }
     });
 
     autoUpdater.on("update-not-available", (info) => {
@@ -93,10 +124,35 @@ function setupAutoUpdater() {
 
     autoUpdater.on("download-progress", (progress) => {
         log("Download progress: " + progress.percent.toFixed(1) + "%");
+
+        // Show progress on the taskbar icon
+        if (mainWindow) {
+            mainWindow.setProgressBar(progress.percent / 100);
+        }
     });
 
-    autoUpdater.on("update-downloaded", (info) => {
-        log("Update downloaded:", info.version, "- will install on quit");
+    autoUpdater.on("update-downloaded", async (info) => {
+        log("Update downloaded:", info.version);
+
+        if (mainWindow) {
+            mainWindow.setProgressBar(-1);
+        }
+
+        const { response } = await dialog.showMessageBox(mainWindow, {
+            type: "info",
+            title: "Update ready",
+            message: "Version " + info.version + " has been downloaded.",
+            detail: "Restart the application now to install it?",
+            buttons: ["Restart now", "Later"],
+            defaultId: 0,
+            cancelId: 1,
+        });
+
+        if (response === 0) {
+            autoUpdater.quitAndInstall();
+        } else {
+            log("User postponed install, will install on quit");
+        }
     });
 
     autoUpdater.checkForUpdates().catch((err) => {
