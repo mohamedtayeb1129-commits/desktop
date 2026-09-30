@@ -6,7 +6,7 @@ const { autoUpdater } = require("electron-updater");
 const logFile = path.join(app.getPath("userData"), "app.log");
 
 function log(...args) {
-    const line = `[${new Date().toISOString()}] ${args.join(" ")}\n`;
+    const line = "[" + new Date().toISOString() + "] " + args.join(" ") + "\n";
 
     try {
         fs.appendFileSync(logFile, line);
@@ -21,14 +21,14 @@ function log(...args) {
 process.on("uncaughtException", (err) => {
     log("UNCAUGHT EXCEPTION:", err.stack || err.message);
 
-    dialog.showErrorBox(
-        "Startup error",
-        err.message
-    );
+    dialog.showErrorBox("Startup error", err.message);
 });
 
 process.on("unhandledRejection", (reason) => {
-    log("UNHANDLED REJECTION:", reason && reason.stack ? reason.stack : String(reason));
+    log(
+        "UNHANDLED REJECTION:",
+        reason && reason.stack ? reason.stack : String(reason)
+    );
 });
 
 function createWindow() {
@@ -48,10 +48,7 @@ function createWindow() {
             log("PAGE LOAD FAILED:", code, desc);
         });
 
-        const indexPath = path.join(
-            __dirname,
-            "./frontend/index.html"
-        );
+        const indexPath = path.join(__dirname, "frontend", "index.html");
 
         log(
             "Loading frontend from:",
@@ -61,12 +58,8 @@ function createWindow() {
         );
 
         win.loadFile(indexPath);
-
     } catch (err) {
-        log(
-            "WINDOW CREATION FAILED:",
-            err.stack || err.message
-        );
+        log("WINDOW CREATION FAILED:", err.stack || err.message);
     }
 }
 
@@ -99,7 +92,7 @@ function setupAutoUpdater() {
     });
 
     autoUpdater.on("download-progress", (progress) => {
-        log(`Download progress: ${progress.percent.toFixed(1)}%`);
+        log("Download progress: " + progress.percent.toFixed(1) + "%");
     });
 
     autoUpdater.on("update-downloaded", (info) => {
@@ -130,6 +123,5 @@ app.on("will-quit", () => {
 });
 
 app.on("window-all-closed", () => {
-    
     app.quit();
 });
