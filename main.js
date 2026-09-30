@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, globalShortcut, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { autoUpdater } = require("electron-updater");
@@ -114,12 +114,22 @@ function setupAutoUpdater() {
 app.whenReady().then(() => {
     createWindow();
 
+    // Ctrl+Shift+L opens the log file
+    globalShortcut.register("CommandOrControl+Shift+L", () => {
+        shell.openPath(logFile);
+    });
+
     // Only check for updates in the packaged application
     if (app.isPackaged) {
         setupAutoUpdater();
     }
 });
 
+app.on("will-quit", () => {
+    globalShortcut.unregisterAll();
+});
+
 app.on("window-all-closed", () => {
+    
     app.quit();
 });
