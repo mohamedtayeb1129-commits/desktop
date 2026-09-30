@@ -27,6 +27,10 @@ process.on("uncaughtException", (err) => {
     );
 });
 
+process.on("unhandledRejection", (reason) => {
+    log("UNHANDLED REJECTION:", reason && reason.stack ? reason.stack : String(reason));
+});
+
 function createWindow() {
     try {
         const win = new BrowserWindow({
@@ -43,34 +47,6 @@ function createWindow() {
         win.webContents.on("did-fail-load", (event, code, desc) => {
             log("PAGE LOAD FAILED:", code, desc);
         });
-
-        /*
-        // Block DevTools shortcuts
-
-        win.webContents.on("before-input-event", (event, input) => {
-            if (
-                input.key === "F12" ||
-                (
-                    input.control &&
-                    input.shift &&
-                    input.key.toLowerCase() === "i"
-                ) ||
-                (
-                    input.control &&
-                    input.shift &&
-                    input.key.toLowerCase() === "j"
-                )
-            ) {
-                event.preventDefault();
-            }
-        });
-
-        // Disable right-click context menu
-
-        win.webContents.on("context-menu", (event) => {
-            event.preventDefault();
-        });
-        */
 
         const indexPath = path.join(
             __dirname,
@@ -102,6 +78,10 @@ function setupAutoUpdater() {
         debug: (...args) => log("UPDATER DEBUG:", ...args),
     };
 
+    // Silent: download in background, install when the app is closed
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+
     autoUpdater.on("checking-for-update", () => {
         log("Checking for update...");
     });
@@ -119,33 +99,16 @@ function setupAutoUpdater() {
     });
 
     autoUpdater.on("download-progress", (progress) => {
-        log(
-            `Download progress: ${progress.percent.toFixed(1)}%`
-        );
+        log(`Download progress: ${progress.percent.toFixed(1)}%`);
     });
 
     autoUpdater.on("update-downloaded", (info) => {
-        log("Update downloaded:", info.version);
-
-        const result = dialog.showMessageBoxSync({
-            type: "info",
-            title: "Update available",
-            message: `Version ${info.version} has been downloaded.`,
-            detail: "Restart the application to install the update.",
-            buttons: [
-                "Restart now",
-                "Later",
-            ],
-            defaultId: 0,
-            cancelId: 1,
-        });
-
-        if (result === 0) {
-            autoUpdater.quitAndInstall();
-        }
+        log("Update downloaded:", info.version, "- will install on quit");
     });
 
-    autoUpdater.checkForUpdatesAndNotify();
+    autoUpdater.checkForUpdates().catch((err) => {
+        log("Update check failed:", err.message);
+    });
 }
 
 app.whenReady().then(() => {
