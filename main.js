@@ -5,7 +5,12 @@ const { autoUpdater } = require("electron-updater");
 
 const logFile = path.join(app.getPath("userData"), "app.log");
 
+// If true: when the update check fails (offline, server down), the app does NOT open.
+// If false: the app opens normally when the check fails.
+const BLOCK_IF_CHECK_FAILS = false;
+
 let mainWindow = null;
+let updateWindow = null;
 
 function log(...args) {
     const line = "[" + new Date().toISOString() + "] " + args.join(" ") + "\n";
@@ -71,7 +76,68 @@ function createWindow() {
     }
 }
 
-function setupAutoUpdater() {
+// Small window that shows the download progress
+function createUpdateWindow() {
+    updateWindow = new BrowserWindow({
+        width: 420,
+        height: 160,
+        resizable: false,
+        minimizable: false,
+        maximizable: false,
+        autoHideMenuBar: true,
+        title: "Updating",
+        webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+        },
+    });
+
+    // Closing this window cancels everything and quits the app
+    updateWindow.on("closed", () => {
+        updateWindow = null;
+        log("Update window closed, quitting");
+        app.quit();
+    });
+
+    const html =
+        "<body style='font-family:sans-serif;text-align:center;padding-top:40px'>" +
+        "<h3>Downloading update...</h3>" +
+        "<div id='p' style='font-size:22px'>0%</div></body>";
+
+    updateWindow.loadURL(
+        "data:text/html;charset=utf-8," + encodeURIComponent(html)
+    );
+}
+
+function setUpdateProgress(percent) {
+    if (updateWindow) {
+        updateWindow.setProgressBar(percent / 100);
+        updateWindow.webContents
+            .executeJavaScript(
+                "document.getElementById('p').textContent='" +
+                    percent.toFixed(0) +
+                    "%'"
+            )
+            .catch(() => {});
+    }
+}
+
+// Resolves with { available: true/false } or { error }
+function checkForUpdate() {
+    return new Promise((resolve) => {
+        autoUpdater.once("update-available", (info) =>
+            resolve({ available: true, info })
+        );
+        autoUpdater.once("update-not-available", () =>
+            resolve({ available: false })
+        );
+        autoUpdater.once("error", (err) => resolve({ error: err }));
+
+        autoUpdater.checkForUpdates().catch((err) => resolve({ error: err }));
+    });
+}
+
+function configureAutoUpdater() {
     autoUpdater.logger = {
         info: (...args) => log("UPDATER INFO:", ...args),
         warn: (...args) => log("UPDATER WARN:", ...args),
@@ -79,99 +145,111 @@ function setupAutoUpdater() {
         debug: (...args) => log("UPDATER DEBUG:", ...args),
     };
 
-    // Ask the user first: do NOT download automatically
     autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.autoInstallOnAppQuit = false;
+}
 
-    autoUpdater.on("checking-for-update", () => {
-        log("Checking for update...");
-    });
+// Returns after either: the app window is opened, or the app is quitting
+async function startApp() {
+    // Dev mode: no updater, open directly
+    if (!app.isPackaged) {
+        createWindow();
+        return;
+    }
 
-    autoUpdater.on("update-available", async (info) => {
-        log("Update available:", info.version);
+    configureAutoUpdater();
 
-        const { response } = await dialog.showMessageBox(mainWindow, {
-            type: "info",
-            title: "Update available",
-            message: "A new version (" + info.version + ") is available.",
-            detail:
-                "You are using version " +
-                app.getVersion() +
-                ". Do you want to download and install the update?",
-            buttons: ["Update now", "Later"],
-            defaultId: 0,
-            cancelId: 1,
-        });
+    log("Checking for update...");
+    const result = await checkForUpdate();
 
-        if (response === 0) {
-            log("User accepted update, downloading...");
-            autoUpdater.downloadUpdate().catch((err) => {
-                log("Download failed:", err.message);
-                dialog.showErrorBox("Update failed", err.message);
-            });
-        } else {
-            log("User postponed update");
+    // Check failed
+    if (result.error) {
+        log("Update check failed:", result.error.message);
+
+        if (BLOCK_IF_CHECK_FAILS) {
+            dialog.showErrorBox(
+                "Cannot check for updates",
+                "The app cannot start without checking for updates.\n\n" +
+                    result.error.message
+            );
+            app.quit();
+            return;
         }
+
+        createWindow();
+        return;
+    }
+
+    // Up to date
+    if (!result.available) {
+        log("No update available");
+        createWindow();
+        return;
+    }
+
+    // Update available: mandatory
+    const version = result.info.version;
+    log("Update available:", version);
+
+    const { response } = await dialog.showMessageBox({
+        type: "info",
+        title: "Update required",
+        message: "A new version (" + version + ") is available.",
+        detail:
+            "You are using version " +
+            app.getVersion() +
+            ". You must update to continue using the application.",
+        buttons: ["Update now", "Quit"],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
     });
 
-    autoUpdater.on("update-not-available", (info) => {
-        log("No update available. Current version:", info.version);
-    });
+    // Quit button or dialog closed
+    if (response !== 0) {
+        log("User refused the update, quitting");
+        app.quit();
+        return;
+    }
 
-    autoUpdater.on("error", (err) => {
-        log("UPDATE ERROR:", err.stack || err.message);
-    });
+    log("User accepted update, downloading...");
+    createUpdateWindow();
 
     autoUpdater.on("download-progress", (progress) => {
         log("Download progress: " + progress.percent.toFixed(1) + "%");
-
-        // Show progress on the taskbar icon
-        if (mainWindow) {
-            mainWindow.setProgressBar(progress.percent / 100);
-        }
+        setUpdateProgress(progress.percent);
     });
 
-    autoUpdater.on("update-downloaded", async (info) => {
-        log("Update downloaded:", info.version);
+    autoUpdater.once("update-downloaded", (info) => {
+        log("Update downloaded:", info.version, "- installing");
 
-        if (mainWindow) {
-            mainWindow.setProgressBar(-1);
+        // Detach the "closed" handler so closing it now doesn't call app.quit() early
+        if (updateWindow) {
+            updateWindow.removeAllListeners("closed");
         }
 
-        const { response } = await dialog.showMessageBox(mainWindow, {
-            type: "info",
-            title: "Update ready",
-            message: "Version " + info.version + " has been downloaded.",
-            detail: "Restart the application now to install it?",
-            buttons: ["Restart now", "Later"],
-            defaultId: 0,
-            cancelId: 1,
-        });
-
-        if (response === 0) {
-            autoUpdater.quitAndInstall();
-        } else {
-            log("User postponed install, will install on quit");
-        }
+        autoUpdater.quitAndInstall();
     });
 
-    autoUpdater.checkForUpdates().catch((err) => {
-        log("Update check failed:", err.message);
-    });
+    try {
+        await autoUpdater.downloadUpdate();
+    } catch (err) {
+        log("Download failed:", err.message);
+        dialog.showErrorBox(
+            "Update failed",
+            err.message + "\n\nThe application will now close."
+        );
+        app.quit();
+    }
 }
 
 app.whenReady().then(() => {
-    createWindow();
-
     // Ctrl+Shift+L opens the log file
     globalShortcut.register("CommandOrControl+Shift+L", () => {
         shell.openPath(logFile);
     });
 
-    // Only check for updates in the packaged application
-    if (app.isPackaged) {
-        setupAutoUpdater();
-    }
+    startApp();
 });
 
 app.on("will-quit", () => {
